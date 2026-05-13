@@ -85,6 +85,7 @@
 
   // ===================== Collection Picker Popup =====================
   let activePopup = null;
+  let topicStarInjecting = false;
 
   function closePopup() {
     if (activePopup) { activePopup.remove(); activePopup = null; }
@@ -391,44 +392,68 @@
   }
 
   // ===================== Topic Title Star =====================
-  async function injectTopicStar(topicId, topicMeta) {
-    // If star already exists and is in correct position, skip
-    const existing = document.querySelector('.ld-star-topic-btn');
-    if (existing) {
-      // Verify it's still attached to DOM properly
-      if (existing.parentNode && document.contains(existing)) return;
-      // Otherwise remove orphan
-      existing.remove();
-    }
-
-    // Find the topic title element
-    const titleEl =
-      document.querySelector('#topic-title h1') ||
+  function getTopicTitleElement() {
+    return document.querySelector('#topic-title h1') ||
       document.querySelector('.title-wrapper h1') ||
       document.querySelector('#topic-title .fancy-title');
+  }
 
+  function cleanupTopicStars(keep) {
+    const stars = Array.from(document.querySelectorAll('.ld-star-topic-btn'));
+    const keeper = keep || stars.find(el => el.parentNode && document.contains(el)) || null;
+
+    for (const star of stars) {
+      if (star !== keeper) star.remove();
+    }
+
+    return keeper;
+  }
+
+  async function injectTopicStar(topicId, topicMeta) {
+    const titleEl = getTopicTitleElement();
     if (!titleEl) return;
 
-    const isStarred = await StarStorage.isTopicStarred(topicId);
+    const existing = cleanupTopicStars();
+    if (existing && titleEl.contains(existing)) return;
+    if (existing) existing.remove();
+    if (topicStarInjecting) return;
 
-    const starBtn = createStarButton({
-      isActive: isStarred,
-      ariaLabel: isStarred ? '取消收藏帖子' : '收藏帖子',
-      onDirectClick: () => StarStorage.toggleTopicStar(topicId, topicMeta, 'default'),
-      onHoverPick: (btn) => showCollectionPicker(btn, { topicId, postNumber: null, topicMeta, postMeta: null }),
-    });
-    starBtn.classList.add('ld-star-topic-btn');
-    starBtn.classList.remove('btn', 'no-text', 'btn-icon', 'btn-flat');
+    topicStarInjecting = true;
+    try {
+      const isStarred = await StarStorage.isTopicStarred(topicId);
+      const currentTitleEl = getTopicTitleElement();
+      if (!currentTitleEl || topicId !== getTopicId()) return;
 
-    // Append INSIDE h1 (inline with title text, not below it)
-    titleEl.style.display = 'inline-flex';
-    titleEl.style.alignItems = 'center';
-    titleEl.style.gap = '6px';
-    titleEl.appendChild(starBtn);
+      // Another observer pass may have inserted the button while storage was loading.
+      const current = cleanupTopicStars();
+      if (current && currentTitleEl.contains(current)) {
+        current.classList.toggle(STAR_ACTIVE_CLASS, isStarred);
+        return;
+      }
+      if (current) current.remove();
+
+      const starBtn = createStarButton({
+        isActive: isStarred,
+        ariaLabel: isStarred ? '取消收藏帖子' : '收藏帖子',
+        onDirectClick: () => StarStorage.toggleTopicStar(topicId, topicMeta, 'default'),
+        onHoverPick: (btn) => showCollectionPicker(btn, { topicId, postNumber: null, topicMeta, postMeta: null }),
+      });
+      starBtn.classList.add('ld-star-topic-btn');
+      starBtn.classList.remove('btn', 'no-text', 'btn-icon', 'btn-flat');
+
+      // Append INSIDE h1 (inline with title text, not below it)
+      currentTitleEl.style.display = 'inline-flex';
+      currentTitleEl.style.alignItems = 'center';
+      currentTitleEl.style.gap = '6px';
+      currentTitleEl.appendChild(starBtn);
+      cleanupTopicStars(starBtn);
+    } finally {
+      topicStarInjecting = false;
+    }
   }
 
   async function updateTopicStarState(topicId) {
-    const topicBtn = document.querySelector('.ld-star-topic-btn');
+    const topicBtn = cleanupTopicStars();
     if (!topicBtn) return;
     try {
       const isStarred = await StarStorage.isTopicStarred(topicId);
